@@ -1,0 +1,145 @@
+import RPi.GPIO as GPIO
+import time
+GPIO.setmode(GPIO.BCM)
+##serial interface
+import serial
+ser = serial.Serial(port='/dev/ttyS0', baudrate = 115220, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE,bytesize=serial.EIGHTBITS,timeout=1)
+msg = ""
+#no signal sent is continue doing as they were
+#1010 is forwards
+#1111 is backwards
+#1011 is right turn
+#1110 is left turn
+#0000 is brake
+#ser.write('insert message here'.encode('utf-8'))
+
+TRIG = 23
+ECHO = 24
+GPIO.setwarnings(False)
+GPIO.setup(21, GPIO.OUT) #motor signal output
+GPIO.setup(TRIG,GPIO.OUT)
+GPIO.setup(ECHO,GPIO.IN)
+
+#left remebers if the last time the rover had to turn was left (0 being false, 1 being true) 
+left = 0
+#turn is 0 if it's not turning and 1 if it is
+turn = 0
+# sets time to sleep after a commands
+sleeping = 0.5
+#time before is a varible to see the time before, as not to brick the code with time.sleeps
+time_before = time.time()
+#last distance measured 2.5 seconds ago
+last_distance = 0
+#count is defined by how many times the distances measured didn't really change at all
+count=0
+#action is true if the rover is allowed to make a decision
+action = True
+#time_start is used to take the starting time of an action so nothing else can be done until the determined time is up
+time_start = time.time()
+GPIO.output(21,True)
+#measure distance function (if that wasn't obvious)
+def measure_dist():
+    GPIO.output(TRIG, True)
+    time.sleep(0.000000001)
+    GPIO.output(TRIG, False)
+    #pulse_start = time.time()
+    pulse_check = time.time()
+    while GPIO.input(ECHO) == 0:
+        pass
+    pulse_start = time.time()
+    while  GPIO.input(ECHO) ==1 and ((time.time() - pulse_check)<1):
+        pass
+    pulse_end = time.time()
+    pulse_dur = pulse_end - pulse_start
+    
+    dist = pulse_dur * 17150
+    dist = round(dist, 2)
+    if dist > 400:
+        dist = 400
+    
+    return dist
+#logic code for movement, distance is in cm's (400 being max limit for detection) 
+while True:
+    #average of 3 distances for actual distace, (more useful at higher distances becuase they vary a lot
+    d1 = measure_dist()
+    time.sleep(0.01)
+    d2 = measure_dist()
+    time.sleep(0.01)
+    d3 = measure_dist()
+    time.sleep(0.01)
+    
+    distance = ((d1 + d2 + d3)/3)
+    
+    #getting the current time
+    time_now = time.time()
+    #checking if a set amount of time has passed before another action can be done
+    if (time_now - time_start >= sleeping):
+        action = True
+    
+    #checking if we can do something now
+    if (action == True):
+        #this is checking if the distance has changed at all
+        if (time_now-time_before >= 2.5) and distance !=400:
+            if (distance-distance_before <=3):
+                count+=1
+            else:
+                count=0
+            if (count >=3):
+                ser.write('1111'.encode('utf-8'))
+                action = False
+                sleeping = 2.9
+                time_start = time.time()
+            distance_before = distance
+            time_before = time_now
+        else:
+            count=0
+            distance_before = distance
+            time_before = time_now
+    
+    
+    
+    
+    
+        #if "nothing" ahead
+        if distance >= 50 and turn == 0:
+            ser.write('1010'.encode('utf-8'))
+            action = False
+            sleeping = 0.5
+            time_start = time.time()
+    
+        #when there is something ahead
+        elif (distance < 50) and (distance > 10):
+            if (left ==0):
+                turn = 1
+                ser.write('1110'.encode('utf-8'))
+                action = False
+                sleeping = 0.5
+                time_start = time.time()
+            
+            elif (left ==1):
+                turn = 1
+                ser.write('1011'.encode('utf-8'))
+                action = False
+                sleeping = 0.5
+                time_start = time.time()
+        #there is enough space in front of it to have cleared the turn(hopefully)
+        elif distance > 100 and turn ==1:
+            turn = 0
+            if left ==0:
+                left = 1
+            elif left == 1:
+                left = 0
+            ser.write('1010'.encode('utf-8'))
+            action = False
+            sleeping = 0.5
+            time_start = time.time()
+        #this shouldn't normally occur because of the first statement
+        elif distance < 10:
+            ser.write('1111'.encode('utf-8'))
+            #we're trying to reverse out of whatever problem we've put ourselves in, which is why the time is that length 
+            action = False
+            sleeping = 2
+            time_start = time.time()
+    
+    
+GPIO.cleanup()
